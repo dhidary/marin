@@ -83,16 +83,18 @@ class ManualProvider(_message.Message):
     def __init__(self, hosts: _Optional[_Iterable[str]] = ..., ssh_user: _Optional[str] = ..., ssh_key_file: _Optional[str] = ...) -> None: ...
 
 class GcpVmConfig(_message.Message):
-    __slots__ = ("zone", "machine_type", "boot_disk_size_gb", "service_account")
+    __slots__ = ("zone", "machine_type", "boot_disk_size_gb", "service_account", "enable_external_ip")
     ZONE_FIELD_NUMBER: _ClassVar[int]
     MACHINE_TYPE_FIELD_NUMBER: _ClassVar[int]
     BOOT_DISK_SIZE_GB_FIELD_NUMBER: _ClassVar[int]
     SERVICE_ACCOUNT_FIELD_NUMBER: _ClassVar[int]
+    ENABLE_EXTERNAL_IP_FIELD_NUMBER: _ClassVar[int]
     zone: str
     machine_type: str
     boot_disk_size_gb: int
     service_account: str
-    def __init__(self, zone: _Optional[str] = ..., machine_type: _Optional[str] = ..., boot_disk_size_gb: _Optional[int] = ..., service_account: _Optional[str] = ...) -> None: ...
+    enable_external_ip: bool
+    def __init__(self, zone: _Optional[str] = ..., machine_type: _Optional[str] = ..., boot_disk_size_gb: _Optional[int] = ..., service_account: _Optional[str] = ..., enable_external_ip: _Optional[bool] = ...) -> None: ...
 
 class ManualVmConfig(_message.Message):
     __slots__ = ("host", "ssh_user", "ssh_key_file")
@@ -133,7 +135,7 @@ class VmConfig(_message.Message):
     def __init__(self, name: _Optional[str] = ..., labels: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., gcp: _Optional[_Union[GcpVmConfig, _Mapping]] = ..., manual: _Optional[_Union[ManualVmConfig, _Mapping]] = ...) -> None: ...
 
 class GcpSliceConfig(_message.Message):
-    __slots__ = ("mode", "zone", "runtime_version", "topology", "machine_type", "service_account")
+    __slots__ = ("mode", "zone", "runtime_version", "topology", "machine_type", "service_account", "enable_external_ip")
     class GcpSliceMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         GCP_SLICE_MODE_TPU: _ClassVar[GcpSliceConfig.GcpSliceMode]
@@ -146,13 +148,15 @@ class GcpSliceConfig(_message.Message):
     TOPOLOGY_FIELD_NUMBER: _ClassVar[int]
     MACHINE_TYPE_FIELD_NUMBER: _ClassVar[int]
     SERVICE_ACCOUNT_FIELD_NUMBER: _ClassVar[int]
+    ENABLE_EXTERNAL_IP_FIELD_NUMBER: _ClassVar[int]
     mode: GcpSliceConfig.GcpSliceMode
     zone: str
     runtime_version: str
     topology: str
     machine_type: str
     service_account: str
-    def __init__(self, mode: _Optional[_Union[GcpSliceConfig.GcpSliceMode, str]] = ..., zone: _Optional[str] = ..., runtime_version: _Optional[str] = ..., topology: _Optional[str] = ..., machine_type: _Optional[str] = ..., service_account: _Optional[str] = ...) -> None: ...
+    enable_external_ip: bool
+    def __init__(self, mode: _Optional[_Union[GcpSliceConfig.GcpSliceMode, str]] = ..., zone: _Optional[str] = ..., runtime_version: _Optional[str] = ..., topology: _Optional[str] = ..., machine_type: _Optional[str] = ..., service_account: _Optional[str] = ..., enable_external_ip: _Optional[bool] = ...) -> None: ...
 
 class CoreweaveSliceConfig(_message.Message):
     __slots__ = ("region", "instance_type", "gpu_class", "infiniband")
@@ -367,18 +371,20 @@ class StorageConfig(_message.Message):
     def __init__(self, local_state_dir: _Optional[str] = ..., remote_state_dir: _Optional[str] = ...) -> None: ...
 
 class GcpControllerConfig(_message.Message):
-    __slots__ = ("zone", "machine_type", "boot_disk_size_gb", "port", "service_account")
+    __slots__ = ("zone", "machine_type", "boot_disk_size_gb", "port", "service_account", "enable_external_ip")
     ZONE_FIELD_NUMBER: _ClassVar[int]
     MACHINE_TYPE_FIELD_NUMBER: _ClassVar[int]
     BOOT_DISK_SIZE_GB_FIELD_NUMBER: _ClassVar[int]
     PORT_FIELD_NUMBER: _ClassVar[int]
     SERVICE_ACCOUNT_FIELD_NUMBER: _ClassVar[int]
+    ENABLE_EXTERNAL_IP_FIELD_NUMBER: _ClassVar[int]
     zone: str
     machine_type: str
     boot_disk_size_gb: int
     port: int
     service_account: str
-    def __init__(self, zone: _Optional[str] = ..., machine_type: _Optional[str] = ..., boot_disk_size_gb: _Optional[int] = ..., port: _Optional[int] = ..., service_account: _Optional[str] = ...) -> None: ...
+    enable_external_ip: bool
+    def __init__(self, zone: _Optional[str] = ..., machine_type: _Optional[str] = ..., boot_disk_size_gb: _Optional[int] = ..., port: _Optional[int] = ..., service_account: _Optional[str] = ..., enable_external_ip: _Optional[bool] = ...) -> None: ...
 
 class ManualControllerConfig(_message.Message):
     __slots__ = ("host", "port")

@@ -112,6 +112,7 @@ class GcpControllerProvider:
         self,
         address: str,
         local_port: int | None = None,
+        use_iap: bool = False,
     ) -> AbstractContextManager[str]:
         if self.worker_provider.gcp_service.mode == ServiceMode.LOCAL:
             return nullcontext(address)
@@ -120,6 +121,7 @@ class GcpControllerProvider:
             label_prefix=self.worker_provider.label_prefix,
             ssh_config=self.worker_provider.ssh_config,
             local_port=local_port,
+            use_iap=use_iap,
         )
 
     def resolve_image(self, image: str, zone: str | None = None) -> str:
@@ -304,6 +306,51 @@ def _establish_tunnel(
     return proc
 
 
+def _establish_iap_tunnel(
+    *,
+    project: str,
+    zone: str,
+    vm_name: str,
+    remote_port: int,
+    local_port: int,
+    effective_service_account: str | None,
+    timeout: float,
+) -> subprocess.Popen:
+    """Start an IAP tunnel subprocess (`gcloud compute start-iap-tunnel`).
+
+    IAP tunneling routes traffic through Google's network without requiring
+    the VM to have a public IP. The caller must hold `roles/iap.tunnelResourceAccessor`
+    on the target VM (or the project).
+    """
+    cmd = [
+        "gcloud",
+        "compute",
+        "start-iap-tunnel",
+        vm_name,
+        str(remote_port),
+        f"--project={project}",
+        f"--zone={zone}",
+        f"--local-host-port=127.0.0.1:{local_port}",
+    ]
+    if effective_service_account:
+        cmd.append(f"--impersonate-service-account={effective_service_account}")
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+
+    if not wait_for_port(local_port, host="127.0.0.1", timeout=timeout):
+        stderr = proc.stderr.read().decode() if proc.stderr else ""
+        proc.terminate()
+        proc.wait()
+        raise RuntimeError(f"IAP tunnel failed to establish: {stderr}")
+
+    return proc
+
+
 @contextmanager
 def _gcp_tunnel(
     project: str,
@@ -311,16 +358,23 @@ def _gcp_tunnel(
     ssh_config: config_pb2.SshConfig | None,
     local_port: int | None = None,
     timeout: float = 60.0,
+    use_iap: bool = False,
 ) -> Iterator[str]:
-    """SSH tunnel to the controller VM, yielding the local URL.
+    """Tunnel to the controller VM, yielding the local URL.
 
     Binds explicitly to 127.0.0.1 to avoid conflicts with other processes
     that may be listening on the same port on a different address family (IPv6).
     Picks a free port automatically if none is specified.
+
+    When ``use_iap`` is true, uses ``gcloud compute start-iap-tunnel`` so the
+    controller can be reached over its internal IP via Identity-Aware Proxy —
+    required in projects where ``constraints/compute.vmExternalIpAccess``
+    forbids external IPs on VMs.
     """
     effective_service_account = ssh_impersonate_service_account(ssh_config)
-    key_file = ssh_key_file(ssh_config, effective_service_account)
-    _check_gcloud_ssh_key(key_file)
+    if not use_iap:
+        key_file = ssh_key_file(ssh_config, effective_service_account)
+        _check_gcloud_ssh_key(key_file)
 
     if local_port is None:
         local_port = find_free_port(start=10000)
@@ -347,23 +401,40 @@ def _gcp_tunnel(
     vm_name = parts[0]
     zone = parts[1] if len(parts) > 1 else ""
 
-    logger.info("Establishing SSH tunnel to %s (zone=%s)...", vm_name, zone)
-
-    proc = retry_with_backoff(
-        lambda: _establish_tunnel(
-            project=project,
-            zone=zone,
-            vm_name=vm_name,
-            local_port=local_port,
-            ssh_config=ssh_config,
-            effective_service_account=effective_service_account,
-            timeout=timeout,
-        ),
-        retryable=lambda e: isinstance(e, RuntimeError) and _is_transient_ssh_error(str(e)),
-        max_attempts=3,
-        backoff=ExponentialBackoff(initial=5.0, maximum=30.0, factor=2.0),
-        operation=f"SSH tunnel to {vm_name}",
-    )
+    if use_iap:
+        logger.info("Establishing IAP tunnel to %s (zone=%s)...", vm_name, zone)
+        proc = retry_with_backoff(
+            lambda: _establish_iap_tunnel(
+                project=project,
+                zone=zone,
+                vm_name=vm_name,
+                remote_port=10000,
+                local_port=local_port,
+                effective_service_account=effective_service_account,
+                timeout=timeout,
+            ),
+            retryable=lambda e: isinstance(e, RuntimeError) and _is_transient_ssh_error(str(e)),
+            max_attempts=3,
+            backoff=ExponentialBackoff(initial=5.0, maximum=30.0, factor=2.0),
+            operation=f"IAP tunnel to {vm_name}",
+        )
+    else:
+        logger.info("Establishing SSH tunnel to %s (zone=%s)...", vm_name, zone)
+        proc = retry_with_backoff(
+            lambda: _establish_tunnel(
+                project=project,
+                zone=zone,
+                vm_name=vm_name,
+                local_port=local_port,
+                ssh_config=ssh_config,
+                effective_service_account=effective_service_account,
+                timeout=timeout,
+            ),
+            retryable=lambda e: isinstance(e, RuntimeError) and _is_transient_ssh_error(str(e)),
+            max_attempts=3,
+            backoff=ExponentialBackoff(initial=5.0, maximum=30.0, factor=2.0),
+            operation=f"SSH tunnel to {vm_name}",
+        )
 
     try:
         logger.info("Tunnel ready: 127.0.0.1:%d -> %s:10000", local_port, vm_name)

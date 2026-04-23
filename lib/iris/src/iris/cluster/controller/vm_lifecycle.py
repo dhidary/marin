@@ -309,6 +309,8 @@ def _build_controller_vm_config(
         vm_config.gcp.machine_type = gcp_ctrl.machine_type or "n2-standard-4"
         vm_config.gcp.boot_disk_size_gb = gcp_ctrl.boot_disk_size_gb or DEFAULT_CONTROLLER_BOOT_DISK_SIZE_GB
         vm_config.gcp.service_account = gcp_ctrl.service_account
+        if gcp_ctrl.HasField("enable_external_ip"):
+            vm_config.gcp.enable_external_ip = gcp_ctrl.enable_external_ip
         if config.defaults.ssh.auth_mode == config_pb2.SshConfig.SSH_AUTH_MODE_OS_LOGIN:
             for key, value in OS_LOGIN_METADATA.items():
                 vm_config.metadata[key] = value

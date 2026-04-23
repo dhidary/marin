@@ -406,3 +406,185 @@ def test_tpu_list_extracts_zone_from_wildcard() -> None:
     assert len(results) == 1
     assert results[0].name == "my-tpu"
     assert results[0].zone == "us-central2-b"
+
+
+# ========================================================================
+# enable_external_ip plumbing
+# ========================================================================
+
+
+def test_tpu_create_defaults_to_external_ip_enabled() -> None:
+    """Default TpuCreateRequest posts networkConfig with enableExternalIps=True."""
+    svc = CloudGcpService(project_id="test-project")
+    captured: dict = {}
+
+    def fake_post(url, params, headers, json):
+        captured["body"] = json
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"name": "operations/op-1", "status": "DONE"}
+        return resp
+
+    svc._client = MagicMock()
+    svc._client.post = fake_post
+    with (
+        patch.object(svc, "_wait_tpu_operation", return_value=None),
+        patch.object(svc, "_tpu_get", return_value={"name": "my-tpu", "state": "READY", "networkEndpoints": []}),
+    ):
+        svc.tpu_create(_tpu_request())
+
+    assert captured["body"]["networkConfig"]["enableExternalIps"] is True
+
+
+def test_tpu_create_honors_disabled_external_ip() -> None:
+    """TpuCreateRequest(enable_external_ip=False) posts networkConfig with enableExternalIps=False."""
+    svc = CloudGcpService(project_id="test-project")
+    captured: dict = {}
+
+    def fake_post(url, params, headers, json):
+        captured["body"] = json
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"name": "operations/op-1", "status": "DONE"}
+        return resp
+
+    svc._client = MagicMock()
+    svc._client.post = fake_post
+
+    request = _tpu_request()
+    request.enable_external_ip = False
+    with (
+        patch.object(svc, "_wait_tpu_operation", return_value=None),
+        patch.object(svc, "_tpu_get", return_value={"name": "my-tpu", "state": "READY", "networkEndpoints": []}),
+    ):
+        svc.tpu_create(request)
+
+    assert captured["body"]["networkConfig"]["enableExternalIps"] is False
+
+
+def test_gcloud_tpu_ssh_uses_alpha_when_tunneling_through_iap() -> None:
+    """GcloudRemoteExec switches to `gcloud alpha` for TPU SSH when IAP-tunneling.
+
+    The --tunnel-through-iap flag is not available on the stable
+    `gcloud compute tpus tpu-vm ssh` track; only on alpha.
+    """
+    from iris.cluster.providers.remote_exec import GcloudRemoteExec
+
+    direct = GcloudRemoteExec(project_id="p", _zone="z", vm_id="v", tunnel_through_iap=False)
+    iap = GcloudRemoteExec(project_id="p", _zone="z", vm_id="v", tunnel_through_iap=True)
+
+    direct_cmd = direct._build_cmd("echo hi")
+    iap_cmd = iap._build_cmd("echo hi")
+
+    assert direct_cmd[:2] == ["gcloud", "compute"]
+    assert "--tunnel-through-iap" not in direct_cmd
+    assert iap_cmd[:3] == ["gcloud", "alpha", "compute"]
+    assert "--tunnel-through-iap" in iap_cmd
+
+
+def test_queued_resource_create_defaults_to_external_ip_enabled() -> None:
+    """Default TpuCreateRequest produces NetworkConfig(enable_external_ips=True)."""
+    svc = CloudGcpService(project_id="test-project")
+    mock_client = MagicMock()
+    svc._tpu_alpha_client_cached = mock_client
+
+    svc.queued_resource_create(_tpu_request(capacity_type=config_pb2.CAPACITY_TYPE_RESERVED))
+
+    call = mock_client.create_queued_resource.call_args
+    qr = call.kwargs["queued_resource"]
+    node = qr.tpu.node_spec[0].node
+    assert node.network_config.enable_external_ips is True
+
+
+def test_queued_resource_create_honors_disabled_external_ip() -> None:
+    """TpuCreateRequest(enable_external_ip=False) produces NetworkConfig(enable_external_ips=False)."""
+    svc = CloudGcpService(project_id="test-project")
+    mock_client = MagicMock()
+    svc._tpu_alpha_client_cached = mock_client
+
+    request = _tpu_request(capacity_type=config_pb2.CAPACITY_TYPE_RESERVED)
+    request.enable_external_ip = False
+    svc.queued_resource_create(request)
+
+    call = mock_client.create_queued_resource.call_args
+    qr = call.kwargs["queued_resource"]
+    node = qr.tpu.node_spec[0].node
+    assert node.network_config.enable_external_ips is False
+
+
+def test_vm_create_defaults_to_external_ip_enabled() -> None:
+    """Default VmCreateRequest posts networkInterfaces with accessConfigs (ONE_TO_ONE_NAT)."""
+    svc = CloudGcpService(project_id="test-project")
+    captured: dict = {}
+
+    def fake_post(url, headers, json):
+        captured["body"] = json
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"name": "operation-x", "status": "DONE"}
+        return resp
+
+    svc._client = MagicMock()
+    svc._client.post = fake_post
+    with (
+        patch.object(svc, "_wait_zone_operation", return_value=None),
+        patch.object(svc, "vm_describe", return_value=MagicMock()),
+    ):
+        svc.vm_create(_vm_request())
+
+    nics = captured["body"]["networkInterfaces"]
+    assert nics == [{"accessConfigs": [{"type": "ONE_TO_ONE_NAT"}]}]
+
+
+def test_vm_create_honors_disabled_external_ip() -> None:
+    """VmCreateRequest(enable_external_ip=False) posts networkInterfaces without accessConfigs."""
+    svc = CloudGcpService(project_id="test-project")
+    captured: dict = {}
+
+    def fake_post(url, headers, json):
+        captured["body"] = json
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"name": "operation-x", "status": "DONE"}
+        return resp
+
+    svc._client = MagicMock()
+    svc._client.post = fake_post
+
+    request = _vm_request()
+    request.enable_external_ip = False
+    with (
+        patch.object(svc, "_wait_zone_operation", return_value=None),
+        patch.object(svc, "vm_describe", return_value=MagicMock()),
+    ):
+        svc.vm_create(request)
+
+    nics = captured["body"]["networkInterfaces"]
+    assert nics == [{}]
+    # Explicit: no accessConfig of any kind
+    assert "accessConfigs" not in nics[0]
+
+
+def test_iris_config_controller_uses_iap_default_false() -> None:
+    """IrisConfig.controller_uses_iap() returns False when enable_external_ip is unset."""
+    from iris.cluster.config import IrisConfig
+
+    proto = config_pb2.IrisClusterConfig()
+    proto.platform.gcp.project_id = "p"
+    proto.controller.gcp.zone = "us-central1-a"
+    assert IrisConfig(proto).controller_uses_iap() is False
+
+
+def test_iris_config_controller_uses_iap_true_when_disabled() -> None:
+    """IrisConfig.controller_uses_iap() returns True only when enable_external_ip=False."""
+    from iris.cluster.config import IrisConfig
+
+    proto = config_pb2.IrisClusterConfig()
+    proto.platform.gcp.project_id = "p"
+    proto.controller.gcp.zone = "us-central1-a"
+    proto.controller.gcp.enable_external_ip = False
+    assert IrisConfig(proto).controller_uses_iap() is True
+
+    # Setting explicitly True also returns False (no IAP needed).
+    proto.controller.gcp.enable_external_ip = True
+    assert IrisConfig(proto).controller_uses_iap() is False

@@ -161,7 +161,10 @@ def require_controller_url(ctx: click.Context) -> str:
         # Establish tunnel and keep it alive for command duration
         try:
             logger.info("Establishing tunnel to controller...")
-            tunnel_cm = bundle.controller.tunnel(address=controller_address)
+            tunnel_cm = bundle.controller.tunnel(
+                address=controller_address,
+                use_iap=iris_config.controller_uses_iap(),
+            )
             tunnel_url = tunnel_cm.__enter__()
             ctx.obj["controller_url"] = tunnel_url
             # Clean up tunnel when context closes

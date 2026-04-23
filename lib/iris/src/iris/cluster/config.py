@@ -1167,6 +1167,17 @@ class IrisConfig:
             return worker.controller_address
         return ""
 
+    def controller_uses_iap(self) -> bool:
+        """Return True when the controller VM has no external IP and must be reached via IAP tunnel.
+
+        Only applies to GCP controllers. The default (external IP attached) returns False
+        to preserve the existing SSH-tunnel behavior.
+        """
+        if self._proto.controller.WhichOneof("controller") != "gcp":
+            return False
+        gcp = self._proto.controller.gcp
+        return gcp.HasField("enable_external_ip") and not gcp.enable_external_ip
+
 
 @contextmanager
 def connect_cluster(config: config_pb2.IrisClusterConfig) -> Iterator[str]:
@@ -1192,7 +1203,7 @@ def connect_cluster(config: config_pb2.IrisClusterConfig) -> Iterator[str]:
         bundle = iris_config.provider_bundle()
         address = bundle.controller.start_controller(config)
         try:
-            with bundle.controller.tunnel(address) as tunnel_url:
+            with bundle.controller.tunnel(address, use_iap=iris_config.controller_uses_iap()) as tunnel_url:
                 yield tunnel_url
         finally:
             bundle.controller.stop_controller(config)

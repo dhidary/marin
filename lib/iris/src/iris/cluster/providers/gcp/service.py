@@ -148,6 +148,7 @@ class TpuCreateRequest:
     service_account: str | None = None
     network: str | None = None
     subnetwork: str | None = None
+    enable_external_ip: bool = True
 
 
 @dataclass
@@ -175,6 +176,7 @@ class VmCreateRequest:
     boot_disk_type: str = "pd-standard"
     image_family: str = "cos-stable"
     image_project: str = "cos-cloud"
+    enable_external_ip: bool = True
 
 
 # ============================================================================
@@ -562,7 +564,7 @@ class CloudGcpService:
             body["schedulingConfig"] = {"preemptible": True}
         if request.service_account:
             body["serviceAccount"] = {"email": request.service_account}
-        network_config: dict = {"enableExternalIps": True}
+        network_config: dict = {"enableExternalIps": request.enable_external_ip}
         if request.network:
             network_config["network"] = request.network
         if request.subnetwork:
@@ -651,7 +653,7 @@ class CloudGcpService:
             labels=request.labels or {},
             metadata=request.metadata or {},
             network_config=tpu_v2alpha1.NetworkConfig(
-                enable_external_ips=True,
+                enable_external_ips=request.enable_external_ip,
                 network=request.network or "",
                 subnetwork=request.subnetwork or "",
             ),
@@ -765,7 +767,9 @@ class CloudGcpService:
                     },
                 }
             ],
-            "networkInterfaces": [{"accessConfigs": [{"type": "ONE_TO_ONE_NAT"}]}],
+            "networkInterfaces": (
+                [{"accessConfigs": [{"type": "ONE_TO_ONE_NAT"}]}] if request.enable_external_ip else [{}]
+            ),
             "serviceAccounts": [
                 {
                     "email": request.service_account or "default",

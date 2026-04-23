@@ -343,6 +343,7 @@ class GcpSliceHandle:
                         ssh_impersonate_service_account(self._ssh_config),
                     ),
                     impersonate_service_account=ssh_impersonate_service_account(self._ssh_config),
+                    tunnel_through_iap=external_ip is None,
                     _address=internal_ip,
                 )
             workers.append(
@@ -469,6 +470,7 @@ class GcpVmSliceHandle:
                 ssh_impersonate_service_account(self._ssh_config),
             ),
             impersonate_service_account=ssh_impersonate_service_account(self._ssh_config),
+            tunnel_through_iap=vm_info.external_ip is None,
         )
         worker = GcpStandaloneWorkerHandle(
             _vm_id=f"{self._slice_id}-worker-0",

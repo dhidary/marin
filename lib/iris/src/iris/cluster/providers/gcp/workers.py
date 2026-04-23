@@ -185,6 +185,18 @@ def _gcp_instance_metadata(
     return result
 
 
+def _external_ip_enabled(gcp_config) -> bool:
+    """Read enable_external_ip from GcpVmConfig or GcpSliceConfig, defaulting to True.
+
+    Unset (back-compat with existing configs) means external IP is attached.
+    Set explicitly to false in environments where the org policy
+    constraints/compute.vmExternalIpAccess forbids external IPs.
+    """
+    if not gcp_config.HasField("enable_external_ip"):
+        return True
+    return gcp_config.enable_external_ip
+
+
 def _validate_slice_config(config: config_pb2.SliceConfig) -> None:
     """Validate required fields on a SliceConfig before creating a GCP slice.
 
@@ -321,6 +333,7 @@ class GcpWorkerProvider:
             boot_disk_type=DEFAULT_BOOT_DISK_TYPE,
             image_family="debian-12",
             image_project="debian-cloud",
+            enable_external_ip=_external_ip_enabled(gcp),
         )
 
         logger.info("Creating GCE instance: %s (zone=%s, type=%s)", config.name, zone, machine_type)
@@ -336,6 +349,7 @@ class GcpWorkerProvider:
             vm_name=config.name,
             ssh_key_file=ssh_key_file(self._ssh_config),
             impersonate_service_account=ssh_impersonate_service_account(self._ssh_config),
+            tunnel_through_iap=vm_info.external_ip is None,
         )
 
         return GcpStandaloneWorkerHandle(
@@ -416,6 +430,7 @@ class GcpWorkerProvider:
             metadata=metadata,
             service_account=gcp.service_account or None,
             network="default",
+            enable_external_ip=_external_ip_enabled(gcp),
         )
 
         logger.info("Creating TPU slice: %s (type=%s, zone=%s)", slice_id, config.accelerator_variant, gcp.zone)
@@ -477,6 +492,7 @@ class GcpWorkerProvider:
             metadata=metadata,
             service_account=gcp.service_account or None,
             network="default",
+            enable_external_ip=_external_ip_enabled(gcp),
         )
 
         logger.info(
@@ -559,6 +575,7 @@ class GcpWorkerProvider:
             image_family="debian-12",
             image_project="debian-cloud",
             startup_script=startup_script,
+            enable_external_ip=_external_ip_enabled(gcp),
         )
 
         logger.info("Creating VM slice: %s (vm=%s, zone=%s, type=%s)", slice_id, vm_name, gcp.zone, machine_type)
@@ -760,6 +777,7 @@ class GcpWorkerProvider:
                 vm_name=vm.name,
                 ssh_key_file=ssh_key_file(self._ssh_config),
                 impersonate_service_account=ssh_impersonate_service_account(self._ssh_config),
+                tunnel_through_iap=vm.external_ip is None,
             )
             handles.append(
                 GcpStandaloneWorkerHandle(

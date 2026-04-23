@@ -343,7 +343,7 @@ def cluster_start_smoke(ctx, label_prefix, url_file, min_workers, worker_timeout
         signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
 
     try:
-        with bundle.controller.tunnel(address) as url:
+        with bundle.controller.tunnel(address, use_iap=iris_config.controller_uses_iap()) as url:
             click.echo(f"Tunnel ready: {url}")
 
             with rpc_client(url) as client:

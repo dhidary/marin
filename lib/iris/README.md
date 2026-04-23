@@ -121,6 +121,24 @@ result = client.predict({"text": "hello"})
 
 Workers communicate with the controller using internal VPC IPs. External clients (your laptop, CI) should use SSH tunneling to access the controller.
 
+#### Internal-IP-Only Deployments (IAP)
+
+Projects with the `constraints/compute.vmExternalIpAccess` organization policy
+cannot provision VMs or TPUs with public IPs. Set `enable_external_ip: false`
+on the relevant GCP config sections — the CLI will switch to
+`gcloud compute start-iap-tunnel` for the controller tunnel and pass
+`--tunnel-through-iap` to any `gcloud compute ssh` calls used for bootstrap.
+
+Prerequisites in the target project:
+- IAP API enabled: `gcloud services enable iap.googleapis.com`
+- Caller has `roles/iap.tunnelResourceAccessor` on the project (or target VM)
+- Firewall allows IAP (`35.235.240.0/20`) to the controller's gRPC port. The
+  default VPC already allows port 22 (SSH/bootstrap); the controller port
+  (default 10000) needs an explicit rule:
+  `gcloud compute firewall-rules create allow-iap-to-iris-controller --network=default --source-ranges=35.235.240.0/20 --allow=tcp:10000`
+- Outbound NAT or Private Google Access so VMs can pull the worker/controller
+  images (iris images are on ghcr.io by default).
+
 ## Worker Lifecycle
 
 ### Registration and Heartbeat
