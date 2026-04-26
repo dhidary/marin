@@ -126,6 +126,9 @@ class StepRunner:
 
         local_pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="marin-step-runner")
 
+        # Materialize once so we can both iterate and inspect dep paths.
+        steps_list = list(steps)
+
         # Keyed by output_path (guaranteed unique)
         completed: set[str] = set()
         failed: set[str] = set()
@@ -134,6 +137,26 @@ class StepRunner:
         failures: list[Exception] = []
         # output_path → name_with_hash, for human-readable logging
         path_to_name: dict[str, str] = {}
+
+        # Pre-populate `completed` with dep paths that are already SUCCESS on
+        # disk but aren't in our run set. Without this, --run_only on a step
+        # whose deps are already done elsewhere fails with "unsatisfied
+        # dependencies" because the runner only marks paths as completed when
+        # the step itself runs.
+        run_set: set[str] = {s.output_path for s in steps_list}
+        external_deps: set[str] = set()
+        for s in steps_list:
+            for d in s.dep_paths:
+                if d not in run_set:
+                    external_deps.add(d)
+        for path in external_deps:
+            try:
+                if StatusFile(path, worker_id="check").status == STATUS_SUCCESS:
+                    completed.add(path)
+            except Exception:
+                # Non-existent or unreadable status — leave it; the dependent
+                # step will surface the unmet-dep error with a clear message.
+                pass
 
         def _display_name(output_path: str) -> str:
             return path_to_name.get(output_path, output_path)
@@ -196,7 +219,7 @@ class StepRunner:
             else:
                 completed.add(path)
 
-        for step in steps:
+        for step in steps_list:
             path_to_name[step.output_path] = step.name_with_hash
 
             _harvest()

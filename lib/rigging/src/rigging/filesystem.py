@@ -173,11 +173,22 @@ def marin_temp_bucket(ttl_days: int, prefix: str = "") -> str:
     with lifecycle rules that auto-delete objects under ``ttl=Nd/`` after
     *N* days.
 
+    Set ``MARIN_TEMP_BUCKET`` to override the regional lookup entirely —
+    used when running on a GCE instance whose service account can't write
+    to the canonical ``marin-tmp-{region}`` bucket (e.g. TRC projects).
+
     Args:
         ttl_days: Lifecycle TTL in days.  Should match one of the configured
             values (1-7, 14, 30) in ``infra/configure_temp_buckets.py``.
         prefix: Optional sub-path appended after the TTL directory.
     """
+    override = os.environ.get("MARIN_TEMP_BUCKET")
+    if override:
+        path = f"{override.rstrip('/')}/ttl={ttl_days}d"
+        if prefix:
+            path = f"{path}/{prefix.strip('/')}"
+        return path
+
     mp = marin_prefix()
 
     if mp.startswith("gs://"):

@@ -283,7 +283,6 @@ def get_dataset_tasks(cfg: TransformSFTDatasetConfig):
 
             dataset = load_dataset_with_backoff(
                 context=f"{source} subset={subset_name} split={split}",
-                logger=logger,
                 **dataset_kwargs,
             )
             num_shards = dataset.num_shards
@@ -343,7 +342,6 @@ def process_shard_task(task: ShardTask) -> dict:
 
     dataset = load_dataset_with_backoff(
         context=f"{task.source} subset={subset_name} split={task.split} shard={task.shard_idx}",
-        logger=logger,
         **dataset_kwargs,
     )
     shard_dataset = dataset.shard(num_shards=task.num_shards, index=task.shard_idx)

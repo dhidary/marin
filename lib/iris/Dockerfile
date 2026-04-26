@@ -16,7 +16,8 @@ LABEL org.opencontainers.image.source="https://github.com/marin-community/marin"
 
 ARG KUBECTL_VERSION=v1.32.2
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo 'Acquire::Retries "5"; Acquire::http::Pipeline-Depth "0"; Acquire::http::No-Cache "true";' > /etc/apt/apt.conf.d/99retries \
+    && apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     gnupg \
@@ -136,7 +137,8 @@ FROM python:3.12-slim AS task
 LABEL org.opencontainers.image.source="https://github.com/marin-community/marin"
 LABEL org.opencontainers.image.description="Iris task base image"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo 'Acquire::Retries "5"; Acquire::http::Pipeline-Depth "0"; Acquire::http::No-Cache "true";' > /etc/apt/apt.conf.d/99retries \
+    && apt-get update && apt-get install -y --no-install-recommends \
     curl \
     unzip \
     ca-certificates \

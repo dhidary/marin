@@ -276,17 +276,22 @@ def _maybe_enable_streaming(model: ModelConfig) -> ModelConfig:
     return dataclasses.replace(model, engine_kwargs=engine_kwargs)
 
 
+_ENGINE_KWARG_TO_CLI_FLAG: dict[str, str] = {
+    "load_format": "--load-format",
+    "max_model_len": "--max-model-len",
+    "gpu_memory_utilization": "--gpu-memory-utilization",
+    "tensor_parallel_size": "--tensor-parallel-size",
+    "pipeline_parallel_size": "--pipeline-parallel-size",
+    "distributed_executor_backend": "--distributed-executor-backend",
+}
+
+
 def _engine_kwargs_to_cli_args(engine_kwargs: dict) -> list[str]:
     args: list[str] = []
-    load_format = engine_kwargs.get("load_format")
-    if load_format is not None:
-        args.extend(["--load-format", load_format])
-    max_model_len = engine_kwargs.get("max_model_len")
-    if max_model_len is not None:
-        args.extend(["--max-model-len", str(max_model_len)])
-    gpu_memory_utilization = engine_kwargs.get("gpu_memory_utilization")
-    if gpu_memory_utilization is not None:
-        args.extend(["--gpu-memory-utilization", str(gpu_memory_utilization)])
+    for key, flag in _ENGINE_KWARG_TO_CLI_FLAG.items():
+        value = engine_kwargs.get(key)
+        if value is not None:
+            args.extend([flag, str(value)])
     return args
 
 
@@ -755,13 +760,23 @@ def _default_jax_compilation_cache_dir() -> str:
 # Canonical vLLM environment defaults shared by Docker and native backends.
 # Each (key, default) pair is resolved from the current environment at call time.
 _VLLM_ENV_DEFAULTS: tuple[tuple[str, str], ...] = (
-    # tpu_inference defaults MODEL_IMPL_TYPE=auto, which selects flax_nnx for many
-    # architectures. flax_nnx currently fails without an auto mesh context, so
-    # default to the vllm implementation unless the user overrides it.
-    ("MODEL_IMPL_TYPE", "vllm"),
+    # tpu_inference's multi-host (Ray-PP) path is designed around the flax_nnx
+    # model implementation: the vllm (PyTorch) path under PP hits a known KV
+    # cache layer-name distribution bug (issue #3792 patch #6) that surfaces as
+    # KeyError on layers belonging to non-rank-0 PP stages. flax_nnx is also
+    # what upstream tpu-inference PRs #1903/#1907 (the multi-host fixes) target.
+    ("MODEL_IMPL_TYPE", "flax_nnx"),
     ("TPU_MIN_LOG_LEVEL", "3"),
     ("TPU_STDERR_LOG_LEVEL", "3"),
     ("JAX_ENABLE_COMPILATION_CACHE", "1"),
+    # Tell tpu_inference to use Ray for cross-host orchestration. Without this
+    # the platform plugin picks the multiproc executor, which spawns N worker
+    # subprocesses on a single host that all fight over the same local TPU
+    # chips — fine on single-host (v5litepod-{1,4,8}, v6e-8) but fatal on
+    # multi-VM TPU (v5litepod-16+). Pairs with marin.inference.ray_multihost
+    # which sets up the Ray cluster across iris sibling tasks.
+    ("TPU_MULTIHOST_BACKEND", "ray"),
+    ("TPU_BACKEND_TYPE", "jax"),
 )
 
 # Keys that are passed through to the container when set in the host environment.
@@ -817,6 +832,13 @@ def _start_vllm_native_server(
     extra_cli_args: list[str] | None = None,
 ) -> VllmServerHandle:
     """Start `vllm serve` in-process and wait until `/v1/models` responds."""
+
+    # Apply tpu-inference 0.18.0 multi-host PP patches before launching vllm
+    # (they rewrite tpu_inference source files; the spawned subprocess and
+    # its Ray worker actors then import the patched files cleanly).
+    from marin.inference.tpu_inference_patches import apply_all as apply_tpu_inference_patches
+
+    apply_tpu_inference_patches()
 
     resolved_port = port if port is not None else 8000
 

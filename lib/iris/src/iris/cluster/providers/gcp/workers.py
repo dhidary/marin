@@ -20,8 +20,6 @@ import urllib.request
 
 from iris.cluster.providers.gcp.bootstrap import (
     build_worker_bootstrap_script,
-    rewrite_ghcr_to_ar_remote,
-    zone_to_multi_region,
 )
 from iris.cluster.providers.gcp.handles import (
     CloudSliceState,
@@ -289,14 +287,14 @@ class GcpWorkerProvider:
 
         Non-GHCR images pass through unchanged.
         """
-        if not image.startswith("ghcr.io/"):
-            return image
-        if not zone:
-            raise ValueError("zone is required for GHCR→AR image rewriting on GCP")
-        multi_region = zone_to_multi_region(zone)
-        if not multi_region:
-            return image
-        return rewrite_ghcr_to_ar_remote(image, multi_region, self._project_id)
+        # LOCAL HACK (not for PR): rewrite ghcr.io/<org>/<name>:<tag> → our own AR mirror.
+        # Worker VMs pull from a reliable regional AR repo instead of the flaky GHCR CDN.
+        # The AR repo must already contain the image at :latest (we sync manually once).
+        if image.startswith("ghcr.io/"):
+            name_with_tag = image.rsplit("/", 1)[-1]  # e.g. "iris-worker:abc123"
+            name = name_with_tag.split(":", 1)[0]
+            return f"europe-west4-docker.pkg.dev/plenary-hangout-459022-a0/iris-images/{name}:latest"
+        return image
 
     def _best_effort_delete_tpu(self, slice_id: str, zone: str) -> None:
         """Try to delete a TPU VM that may have been partially created."""

@@ -38,7 +38,7 @@ fray_test = [
     "pytest>=8.3.2",
     "ray[default]"
 ]
-fray_tpu_test = ["jax[tpu]", { include-group = "fray_test" }]
+fray_tpu_test = ["jax", "libtpu", { include-group = "fray_test" }]
 
 dev = [{ include-group = "fray_test" }]
 

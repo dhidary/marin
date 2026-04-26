@@ -1,6 +1,7 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
+import dataclasses
 import logging
 import os
 import shutil
@@ -9,11 +10,19 @@ import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from iris.cluster.client.job_info import get_job_info
 from rigging.filesystem import open_url, url_to_fs
 
 from marin.evaluation.evaluation_config import EvalTaskConfig
 from marin.evaluation.evaluators.evaluator import Evaluator, ModelConfig
 from marin.evaluation.utils import is_remote_path, upload_to_gcs
+from marin.inference.ray_multihost import (
+    derive_tp_pp,
+    is_multihost_tpu_job,
+    join_ray_worker_and_block,
+    start_ray_head,
+    stop_ray,
+)
 from marin.inference.vllm_server import VllmEnvironment
 
 logger = logging.getLogger(__name__)
@@ -78,6 +87,38 @@ class LMEvaluationHarnessEvaluator(Evaluator):
             output_path (str): The path to save the evaluation results.
             max_eval_instances (int | None): The maximum number of evaluation instances to run.
         """
+        # On a multi-host TPU job (e.g. v5litepod-16 = 4 VMs), iris coschedules N
+        # sibling tasks. Marin's vllm-serve is single-host, so without
+        # coordination each sibling would start its own vllm and they would
+        # collide. The Ray-coordinator pattern (rank 0 starts a Ray head + the
+        # vllm-serve, ranks > 0 join Ray and block) lets a single vllm span all
+        # chips. See marin.inference.ray_multihost for details.
+        multihost = is_multihost_tpu_job()
+        if multihost:
+            job_info = get_job_info()
+            assert job_info is not None  # is_multihost_tpu_job() implies a job context
+            if job_info.task_index != 0:
+                logger.info(
+                    "Multi-host TPU eval rank %d/%d: joining Ray cluster as worker.",
+                    job_info.task_index,
+                    job_info.num_tasks,
+                )
+                join_ray_worker_and_block()
+                return  # unreachable: join_ray_worker_and_block exec()s into ray
+
+            tp, pp = derive_tp_pp(job_info)
+            logger.info(
+                "Multi-host TPU eval rank 0: starting Ray head; vllm will run with TP=%d PP=%d.",
+                tp,
+                pp,
+            )
+            start_ray_head()
+            engine_kwargs = dict(model.engine_kwargs)
+            engine_kwargs.setdefault("tensor_parallel_size", tp)
+            engine_kwargs.setdefault("pipeline_parallel_size", pp)
+            engine_kwargs.setdefault("distributed_executor_backend", "ray")
+            model = dataclasses.replace(model, engine_kwargs=engine_kwargs)
+
         # From https://github.com/EleutherAI/lm-evaluation-harness?tab=readme-ov-file#model-apis-and-inference-servers
         # Run lm_eval with the model and the specified evals
         env: VllmEnvironment | None = None
@@ -87,6 +128,18 @@ class LMEvaluationHarnessEvaluator(Evaluator):
                 resolved_model = env.model
 
                 def _run_lm_eval(lm_eval_model_local: str, pretrained_args_local: str) -> None:
+                    # vllm-tpu 0.18.0 moved get_open_port from vllm.utils to
+                    # vllm.utils.network_utils, but our pinned lm-eval commit
+                    # (d5e3391) still does `from vllm.utils import get_open_port`.
+                    # Eager module loading in lm_eval.models.__init__ triggers it
+                    # even though we use the local-completions HTTP path. Re-export
+                    # the symbol into vllm.utils as a compat shim.
+                    import vllm.utils
+                    import vllm.utils.network_utils
+
+                    if not hasattr(vllm.utils, "get_open_port"):
+                        vllm.utils.get_open_port = vllm.utils.network_utils.get_open_port
+
                     from lm_eval.evaluator import simple_evaluate
                     from lm_eval.loggers import EvaluationTracker, WandbLogger
                     from lm_eval.utils import simple_parse_args_string
@@ -145,13 +198,19 @@ class LMEvaluationHarnessEvaluator(Evaluator):
                     raise RuntimeError("vLLM server did not report a model id.")
 
                 def _run_with_tokenizer(tokenizer: str | None) -> None:
+                    # num_concurrent=64 lets lm-eval pipeline that many HTTP
+                    # requests in flight; vllm's continuous batching then chews
+                    # through them in parallel instead of one-at-a-time. For a
+                    # 1B-class model this is the difference between ~40 min
+                    # and ~5 min on GSM8K.
                     if resolved_model.apply_chat_template:
                         lm_eval_model_local = "local-chat-completions"
                         pretrained_args_local = (
                             f"model={env.model_id},"
                             f"base_url={env.server_url}/chat/completions,"
                             "tokenizer_backend=huggingface,"
-                            "tokenized_requests=False"
+                            "tokenized_requests=False,"
+                            "num_concurrent=64"
                         )
                     else:
                         lm_eval_model_local = "local-completions"
@@ -159,7 +218,8 @@ class LMEvaluationHarnessEvaluator(Evaluator):
                             f"model={env.model_id},"
                             f"base_url={env.server_url}/completions,"
                             "tokenizer_backend=huggingface,"
-                            "tokenized_requests=False"
+                            "tokenized_requests=False,"
+                            "num_concurrent=64"
                         )
                     if tokenizer is not None:
                         pretrained_args_local += f",tokenizer={tokenizer}"
@@ -207,3 +267,6 @@ class LMEvaluationHarnessEvaluator(Evaluator):
 
             if os.path.exists(self.RESULTS_PATH):
                 shutil.rmtree(self.RESULTS_PATH)
+
+            if multihost:
+                stop_ray()
